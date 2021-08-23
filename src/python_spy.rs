@@ -290,12 +290,16 @@ impl PythonSpy {
             false
         } else {
             let frame = &frames[0];
+            // println!("{}:{}, {}", frame.filename, frame.line, frame.name);
             (frame.name == "wait" && frame.filename.ends_with("threading.py")) ||
             (frame.name == "select" && frame.filename.ends_with("selectors.py")) ||
             (frame.name == "poll" && (frame.filename.ends_with("asyncore.py") ||
                                     frame.filename.contains("zmq") ||
                                     frame.filename.contains("gevent") ||
-                                    frame.filename.contains("tornado")))
+                                    frame.filename.contains("tornado"))) ||
+            (frame.filename.ends_with("gevent/hub.py")) ||
+            (frame.filename.ends_with("gunicorn/arbiter.py")) ||
+            (frame.filename.ends_with("gunicorn/reloader.py"))
         }
     }
 
