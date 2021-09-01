@@ -299,7 +299,8 @@ impl PythonSpy {
                                     frame.filename.contains("tornado"))) ||
             (frame.filename.ends_with("gevent/hub.py")) ||
             (frame.filename.ends_with("gunicorn/arbiter.py")) ||
-            (frame.filename.ends_with("gunicorn/reloader.py"))
+            (frame.filename.ends_with("gunicorn/reloader.py")) ||
+            ((frame.name == "wait" || frame.name == "_wait") && frame.filename.ends_with("asyncio/tasks.py"))
         }
     }
 
