@@ -297,10 +297,12 @@ impl PythonSpy {
                                     frame.filename.contains("zmq") ||
                                     frame.filename.contains("gevent") ||
                                     frame.filename.contains("tornado"))) ||
+            ((frame.name == "wait" || frame.name == "_wait") && frame.filename.ends_with("asyncio/tasks.py")) ||
             (frame.filename.ends_with("gevent/hub.py")) ||
             (frame.filename.ends_with("gunicorn/arbiter.py")) ||
             (frame.filename.ends_with("gunicorn/reloader.py")) ||
-            ((frame.name == "wait" || frame.name == "_wait") && frame.filename.ends_with("asyncio/tasks.py"))
+            frame.filename.ends_with("pymongo/socket_checker.py") ||
+            frame.filename.ends_with("pymongo/periodic_executor.py")
         }
     }
 
