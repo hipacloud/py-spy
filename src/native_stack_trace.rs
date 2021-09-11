@@ -1,14 +1,15 @@
 use std::collections::HashSet;
 use failure::Error;
 
+use cpp_demangle::{DemangleOptions, BorrowedSymbol};
 use remoteprocess::{self, Pid};
+use lazy_static::lazy_static;
 use lru::LruCache;
 
 use crate::binary_parser::BinaryInfo;
 use crate::cython;
 use crate::stack_trace::{Frame};
 use crate::utils::resolve_filename;
-use crate::cpp_demangle::{DemangleOptions, BorrowedSymbol};
 
 pub struct NativeStack {
     should_reload: bool,
@@ -131,7 +132,7 @@ impl NativeStack {
                 }
             } else if python_frame_index == frames.len() + 1 {
                 // if we have seen exactly one more python frame in the native stack than the python stack - let it go.
-                // (can happen when the python stack has been unwound, but haven't exitted the PyEvalFrame function
+                // (can happen when the python stack has been unwound, but haven't exited the PyEvalFrame function
                 // yet)
                 info!("Have {} native and {} python threads in stack - allowing for now",
                     python_frame_index, frames.len());
