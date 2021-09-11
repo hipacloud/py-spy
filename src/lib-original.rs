@@ -16,9 +16,7 @@
 //!
 //!     // Print out the python stack for each thread
 //!     for trace in traces {
-//!         println!("Thread {:#X} ({})", trace.thread_id, trace.status_str());
 //!         for frame in &trace.frames {
-//!             println!("\t {} ({}:{})", frame.name, frame.filename, frame.line);
 //!         }
 //!     }
 //!     Ok(())
@@ -40,8 +38,6 @@ extern crate lru;
 extern crate memmap;
 extern crate proc_maps;
 extern crate regex;
-#[macro_use]
-extern crate serde_derive;
 #[cfg(windows)]
 extern crate winapi;
 extern crate cpp_demangle;
@@ -71,3 +67,112 @@ pub use config::Config;
 pub use stack_trace::StackTrace;
 pub use stack_trace::Frame;
 pub use remoteprocess::Pid;
+
+use std::collections::HashMap;
+use std::sync::Mutex;
+use std::slice;
+use crate::config::LockingStrategy;
+
+lazy_static! {
+    static ref HASHMAP: Mutex<HashMap<Pid, PythonSpy>> =
+    {
+        let h = HashMap::new();
+        Mutex::new(h)
+    };
+}
+
+fn copy_error(err_ptr: *mut u8, err_len: i32, err_str: String) -> i32 {
+    let slice = err_str.as_bytes();
+    let l = slice.len();
+    if l as i32 > err_len {
+        return copy_error(err_ptr, err_len, "buffer is too small".to_string());
+    }
+    let target = unsafe { slice::from_raw_parts_mut(err_ptr, l as usize) };
+    target.clone_from_slice(slice);
+    -(l as i32)
+}
+
+#[no_mangle]
+pub extern "C" fn pyspy_init(pid: Pid, blocking: i32, err_ptr: *mut u8, err_len: i32) -> i32 {
+    let mut config = config::Config::default();
+    if blocking == 0 {
+        config.blocking = LockingStrategy::NonBlocking;
+    }
+    match PythonSpy::new(pid, &config) {
+        Ok(getter) => {
+            let mut map = HASHMAP.lock().unwrap(); // get()
+            map.insert(pid, getter);
+            1
+        }
+        Err(err) => {
+            copy_error(err_ptr, err_len, err.to_string())
+        }
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn pyspy_cleanup(pid: Pid, err_ptr: *mut u8, err_len: i32) -> i32 {
+    let mut map = HASHMAP.lock().unwrap(); // get()
+    map.remove(&pid);
+    1
+}
+
+use std::io::{self, Write};
+
+#[no_mangle]
+pub extern "C" fn pyspy_snapshot(pid: Pid, ptr: *mut u8, len: i32, err_ptr: *mut u8, err_len: i32) -> i32 {
+    println!("pyspy_snapshot called");
+    io::stdout().flush().unwrap();
+
+    let mut map = HASHMAP.lock().unwrap(); // get()
+    match map.get_mut(&pid) {
+        Some(getter) => {
+            let mut res = 0;
+            println!("before get stack traces");
+            io::stdout().flush().unwrap();
+
+            let trace_res = getter.get_stack_traces();
+            println!("after get stack traces");
+            io::stdout().flush().unwrap();
+
+            match trace_res {
+                Ok(trace) => {
+                    let mut string_list = vec![];
+                    for thread in trace.iter() {
+                        println!("Thread {:#X})", thread.thread_id);
+                        io::stdout().flush().unwrap();
+                        if thread.active {
+                            for frame in &thread.frames {
+                                let filename = match &frame.short_filename { Some(f) => &f, None => &frame.filename };
+                                if frame.line != 0 {
+                                    string_list.insert(0, format!("{}:{} - {}", filename, frame.line, frame.name));
+                                } else {
+                                    string_list.insert(0, format!("{} - {}", filename, frame.name));
+                                }
+                            }
+                            break
+                        }
+                    }
+                    let joined = string_list.join(";");
+                    let joined_slice = joined.as_bytes();
+                    let l = joined_slice.len();
+
+                    if len < (l as i32) {
+                        res = copy_error(err_ptr, err_len, "buffer is too small".to_string());
+                    } else {
+                        let slice = unsafe { slice::from_raw_parts_mut(ptr, l as usize) };
+                        slice.clone_from_slice(joined_slice);
+                        res = l as i32;
+                        println!("trace data copied");
+                        io::stdout().flush().unwrap();
+                    }
+                }
+                Err(err) => {
+                    res = copy_error(err_ptr, err_len, err.to_string());
+                }
+            }
+            res
+        }
+        None => copy_error(err_ptr, err_len, "could not find spy for this pid".to_string())
+    }
+}

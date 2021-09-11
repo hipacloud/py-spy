@@ -33,28 +33,28 @@ extern crate lazy_static;
 extern crate libc;
 #[macro_use]
 extern crate log;
+extern crate cpp_demangle;
 #[cfg(unwind)]
 extern crate lru;
 extern crate memmap;
 extern crate proc_maps;
-extern crate regex;
-#[cfg(windows)]
-extern crate winapi;
-extern crate cpp_demangle;
 extern crate rand;
 extern crate rand_distr;
+extern crate regex;
 extern crate remoteprocess;
+#[cfg(windows)]
+extern crate winapi;
 
-pub mod config;
 pub mod binary_parser;
+pub mod config;
 #[cfg(unwind)]
 mod cython;
 #[cfg(unwind)]
 mod native_stack_trace;
 mod python_bindings;
+mod python_data_access;
 mod python_interpreters;
 mod python_spy;
-mod python_data_access;
 mod python_threading;
 pub mod sampler;
 mod stack_trace;
@@ -62,20 +62,20 @@ pub mod timer;
 mod utils;
 mod version;
 
-pub use python_spy::PythonSpy;
 pub use config::Config;
-pub use stack_trace::StackTrace;
-pub use stack_trace::Frame;
+pub use python_spy::PythonSpy;
 pub use remoteprocess::Pid;
+pub use sampler::Sampler;
+pub use stack_trace::Frame;
+pub use stack_trace::StackTrace;
 
-use std::collections::HashMap;
-use std::sync::Mutex;
-use std::slice;
 use crate::config::LockingStrategy;
+use std::collections::HashMap;
+use std::slice;
+use std::sync::Mutex;
 
 lazy_static! {
-    static ref HASHMAP: Mutex<HashMap<Pid, PythonSpy>> =
-    {
+    static ref HASHMAP: Mutex<HashMap<Pid, Sampler>> = {
         let h = HashMap::new();
         Mutex::new(h)
     };
@@ -98,15 +98,14 @@ pub extern "C" fn pyspy_init(pid: Pid, blocking: i32, err_ptr: *mut u8, err_len:
     if blocking == 0 {
         config.blocking = LockingStrategy::NonBlocking;
     }
-    match PythonSpy::new(pid, &config) {
-        Ok(getter) => {
+    config.subprocesses = true;
+    match Sampler::new(pid, &config) {
+        Ok(sampler) => {
             let mut map = HASHMAP.lock().unwrap(); // get()
-            map.insert(pid, getter);
+            map.insert(pid, sampler);
             1
         }
-        Err(err) => {
-            copy_error(err_ptr, err_len, err.to_string())
-        }
+        Err(err) => copy_error(err_ptr, err_len, err.to_string()),
     }
 }
 
@@ -117,47 +116,69 @@ pub extern "C" fn pyspy_cleanup(pid: Pid, err_ptr: *mut u8, err_len: i32) -> i32
     1
 }
 
+use std::io::{self, Write};
+
 #[no_mangle]
-pub extern "C" fn pyspy_snapshot(pid: Pid, ptr: *mut u8, len: i32, err_ptr: *mut u8, err_len: i32) -> i32 {
+pub extern "C" fn pyspy_snapshot(
+    pid: Pid,
+    ptr: *mut u8,
+    len: i32,
+    err_ptr: *mut u8,
+    err_len: i32,
+) -> i32 {
+    println!("pyspy_snapshot called");
+    io::stdout().flush().unwrap();
     let mut map = HASHMAP.lock().unwrap(); // get()
     match map.get_mut(&pid) {
-        Some(getter) => {
-            let mut res = 0;
-            let trace_res = getter.get_stack_traces();
-            match trace_res {
-                Ok(trace) => {
-                    let mut string_list = vec![];
-                    for thread in trace.iter() {
-                        if thread.active {
-                            for frame in &thread.frames {
-                                let filename = match &frame.short_filename { Some(f) => &f, None => &frame.filename };
-                                if frame.line != 0 {
-                                    string_list.insert(0, format!("{}:{} - {}", filename, frame.line, frame.name));
-                                } else {
-                                    string_list.insert(0, format!("{} - {}", filename, frame.name));
-                                }
-                            }
-                            break
+        Some(sampler) => {
+            // let mut res = 0;
+            for sample in sampler {
+                // println!("sample");
+                // io::stdout().flush().unwrap();
+                let mut string_list = vec![];
+                for thread in sample.traces.iter() {
+                    println!("Thread {:#X})", thread.thread_id);
+                    io::stdout().flush().unwrap();
+                    if !thread.active {
+                        continue;
+                    }
+                    for frame in &thread.frames {
+                        let filename = match &frame.short_filename {
+                            Some(f) => &f,
+                            None => &frame.filename,
+                        };
+                        if frame.line != 0 {
+                            string_list
+                                .insert(0, format!("{}:{} - {}", filename, frame.line, frame.name));
+                        } else {
+                            string_list.insert(0, format!("{} - {}", filename, frame.name));
                         }
                     }
-                    let joined = string_list.join(";");
-                    let joined_slice = joined.as_bytes();
-                    let l = joined_slice.len();
-
-                    if len < (l as i32) {
-                        res = copy_error(err_ptr, err_len, "buffer is too small".to_string());
-                    } else {
-                        let slice = unsafe { slice::from_raw_parts_mut(ptr, l as usize) };
-                        slice.clone_from_slice(joined_slice);
-                        res = l as i32
-                    }
+                    break;
                 }
-                Err(err) => {
-                    res = copy_error(err_ptr, err_len, err.to_string());
+                let joined = string_list.join(";");
+                let joined_slice = joined.as_bytes();
+                let l = joined_slice.len();
+
+                if len < (l as i32) {
+                    println!("buffer is too small");
+                    io::stdout().flush().unwrap();
+                    return copy_error(err_ptr, err_len, "buffer is too small".to_string());
+                } else {
+                    let slice = unsafe { slice::from_raw_parts_mut(ptr, l as usize) };
+                    slice.clone_from_slice(joined_slice);
+                    println!("trace data copied {}", l);
+                    io::stdout().flush().unwrap();
+                    return l as i32;
                 }
             }
-            res
+
+            return 0;
         }
-        None => copy_error(err_ptr, err_len, "could not find spy for this pid".to_string())
+        None => copy_error(
+            err_ptr,
+            err_len,
+            "could not find spy for this pid".to_string(),
+        ),
     }
 }
