@@ -10,7 +10,7 @@ pub fn print_traces(pid: Pid, config: &Config) -> Result<(), Error> {
     let mut process = PythonSpy::new(pid, config)?;
     if config.dump_json {
         let traces = process.get_stack_traces()?;
-        println!("{}", serde_json::to_string_pretty(&traces)?);
+        // println!("{}", serde_json::to_string_pretty(&traces)?);
         return Ok(())
     }
 
