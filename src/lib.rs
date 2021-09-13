@@ -74,6 +74,9 @@ use std::collections::HashMap;
 use std::slice;
 use std::sync::Mutex;
 
+use rand::thread_rng;
+use rand::seq::SliceRandom;
+
 lazy_static! {
     static ref HASHMAP: Mutex<HashMap<Pid, Sampler>> = {
         let h = HashMap::new();
@@ -126,19 +129,22 @@ pub extern "C" fn pyspy_snapshot(
     err_ptr: *mut u8,
     err_len: i32,
 ) -> i32 {
-    println!("pyspy_snapshot called");
-    io::stdout().flush().unwrap();
+    // println!("pyspy_snapshot called");
+    // io::stdout().flush().unwrap();
     let mut map = HASHMAP.lock().unwrap(); // get()
     match map.get_mut(&pid) {
         Some(sampler) => {
             // let mut res = 0;
-            for sample in sampler {
+            for mut sample in sampler {
                 // println!("sample");
                 // io::stdout().flush().unwrap();
                 let mut string_list = vec![];
-                for thread in sample.traces.iter() {
-                    println!("Thread {:#X})", thread.thread_id);
-                    io::stdout().flush().unwrap();
+                let mut traces: Vec<StackTrace> = sample.traces;
+                traces.shuffle(&mut thread_rng());
+
+                for thread in traces.iter() {
+                    // println!("Thread {:#X})", thread.thread_id);
+                    // io::stdout().flush().unwrap();
                     if !thread.active {
                         continue;
                     }
@@ -167,8 +173,8 @@ pub extern "C" fn pyspy_snapshot(
                 } else {
                     let slice = unsafe { slice::from_raw_parts_mut(ptr, l as usize) };
                     slice.clone_from_slice(joined_slice);
-                    println!("trace data copied {}", l);
-                    io::stdout().flush().unwrap();
+                    // println!("trace data copied {}", l);
+                    // io::stdout().flush().unwrap();
                     return l as i32;
                 }
             }
