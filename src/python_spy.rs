@@ -322,7 +322,8 @@ impl PythonSpy {
             (frame.filename.ends_with("gunicorn/arbiter.py")) ||
             (frame.filename.ends_with("gunicorn/reloader.py")) ||
             frame.filename.ends_with("pymongo/socket_checker.py") ||
-            frame.filename.ends_with("pymongo/periodic_executor.py")
+            frame.filename.ends_with("pymongo/periodic_executor.py") ||
+            (frame.name == "_worker" && frame.filename.ends_with("concurrent/futures/thread.py"))
         }
     }
 
