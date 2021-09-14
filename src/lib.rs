@@ -101,7 +101,6 @@ pub extern "C" fn pyspy_init(pid: Pid, blocking: i32, err_ptr: *mut u8, err_len:
     if blocking == 0 {
         config.blocking = LockingStrategy::NonBlocking;
     }
-    config.subprocesses = true;
     match Sampler::new(pid, &config) {
         Ok(sampler) => {
             let mut map = HASHMAP.lock().unwrap(); // get()
@@ -119,8 +118,6 @@ pub extern "C" fn pyspy_cleanup(pid: Pid, err_ptr: *mut u8, err_len: i32) -> i32
     1
 }
 
-use std::io::{self, Write};
-
 #[no_mangle]
 pub extern "C" fn pyspy_snapshot(
     pid: Pid,
@@ -129,22 +126,15 @@ pub extern "C" fn pyspy_snapshot(
     err_ptr: *mut u8,
     err_len: i32,
 ) -> i32 {
-    // println!("pyspy_snapshot called");
-    // io::stdout().flush().unwrap();
     let mut map = HASHMAP.lock().unwrap(); // get()
     match map.get_mut(&pid) {
         Some(sampler) => {
-            // let mut res = 0;
-            for mut sample in sampler {
-                // println!("sample");
-                // io::stdout().flush().unwrap();
+            for sample in sampler {
                 let mut string_list = vec![];
                 let mut traces: Vec<StackTrace> = sample.traces;
                 traces.shuffle(&mut thread_rng());
 
                 for thread in traces.iter() {
-                    // println!("Thread {:#X})", thread.thread_id);
-                    // io::stdout().flush().unwrap();
                     if !thread.active {
                         continue;
                     }
@@ -167,14 +157,12 @@ pub extern "C" fn pyspy_snapshot(
                 let l = joined_slice.len();
 
                 if len < (l as i32) {
-                    println!("buffer is too small");
-                    io::stdout().flush().unwrap();
+                    // println!("buffer is too small");
+                    // io::stdout().flush().unwrap();
                     return copy_error(err_ptr, err_len, "buffer is too small".to_string());
                 } else {
                     let slice = unsafe { slice::from_raw_parts_mut(ptr, l as usize) };
                     slice.clone_from_slice(joined_slice);
-                    // println!("trace data copied {}", l);
-                    // io::stdout().flush().unwrap();
                     return l as i32;
                 }
             }
