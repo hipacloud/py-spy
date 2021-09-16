@@ -27,6 +27,8 @@ use crate::python_threading::thread_name_lookup;
 use crate::stack_trace::{StackTrace, get_stack_traces, get_stack_trace};
 use crate::version::Version;
 
+use std::io::{self, Write};
+
 /// Lets you retrieve stack traces of a running python program
 pub struct PythonSpy {
     pub pid: Pid,
@@ -84,9 +86,11 @@ impl PythonSpy {
 
         let version = get_python_version(&python_info, &process)?;
         println!("python version {} detected", version);
+        io::stdout().flush().unwrap();
 
         let interpreter_address = get_interpreter_address(&python_info, &process, &version)?;
         println!("Found interpreter at 0x{:016x}", interpreter_address);
+        io::stdout().flush().unwrap();
 
         // lets us figure out which thread has the GIL
          let threadstate_address = match version {
@@ -96,6 +100,7 @@ impl PythonSpy {
                         if let Some(offset) = pyruntime::get_tstate_current_offset(&version) {
                             println!("Found _PyRuntime @ 0x{:016x}, getting gilstate.tstate_current from offset 0x{:x}",
                                 addr, offset);
+                            io::stdout().flush().unwrap();
                             addr as usize + offset
                         } else {
                             error_if_gil(config, &version, "unknown pyruntime.gilstate.tstate_current offset")?;
@@ -112,6 +117,7 @@ impl PythonSpy {
                  match python_info.get_symbol("_PyThreadState_Current") {
                     Some(&addr) => {
                         println!("Found _PyThreadState_Current @ 0x{:016x}", addr);
+                        io::stdout().flush().unwrap();
                         addr as usize
                     },
                     None => {
@@ -167,6 +173,7 @@ impl PythonSpy {
                 return Err(err);
             }
             println!("Failed to connect to process, retrying. Error: {}", err);
+            io::stdout().flush().unwrap();
             std::thread::sleep(std::time::Duration::from_millis(20));
         }
     }
@@ -236,6 +243,7 @@ impl PythonSpy {
             if let Some(tid) = os_thread_id {
                 if thread_activity.len() > 0 && !thread_activity.contains_key(&tid) {
                     println!("clearing away thread id caches, thread {} has exited", tid);
+                    io::stdout().flush().unwrap();
                     self.python_thread_ids.clear();
                     self.python_thread_names.clear();
                     os_thread_id = self._get_os_thread_id(python_thread_id, &interp)?;
@@ -429,6 +437,7 @@ impl PythonSpy {
         }
         println!("failed looking up python threadid for {}. known python_thread_ids {:?}. all_python_threads {:?}",
             python_thread_id, self.python_thread_ids, all_python_threads);
+        io::stdout().flush().unwrap();
         Ok(None)
     }
 
@@ -536,6 +545,7 @@ fn get_python_version(python_info: &PythonProcessInfo, process: &remoteprocess::
     // If possible, grab the sys.version string from the processes memory (mac osx).
     if let Some(&addr) = python_info.get_symbol("Py_GetVersion.version") {
         println!("Getting version from symbol address");
+        io::stdout().flush().unwrap();
         if let Ok(bytes) = process.copy(addr as usize, 128) {
             if let Ok(version) = Version::scan_bytes(&bytes) {
                 return Ok(version);
@@ -546,6 +556,7 @@ fn get_python_version(python_info: &PythonProcessInfo, process: &remoteprocess::
     // otherwise get version info from scanning BSS section for sys.version string
     if let Some(ref pb) = python_info.python_binary {
         println!("Getting version from python binary BSS");
+        io::stdout().flush().unwrap();
         let bss = process.copy(pb.bss_addr as usize,
                                pb.bss_size as usize)?;
         match Version::scan_bytes(&bss) {
@@ -557,6 +568,7 @@ fn get_python_version(python_info: &PythonProcessInfo, process: &remoteprocess::
     // try again if there is a libpython.so
     if let Some(ref libpython) = python_info.libpython_binary {
         println!("Getting version from libpython BSS");
+        io::stdout().flush().unwrap();
         let bss = process.copy(libpython.bss_addr as usize,
                                libpython.bss_size as usize)?;
         match Version::scan_bytes(&bss) {
@@ -568,6 +580,7 @@ fn get_python_version(python_info: &PythonProcessInfo, process: &remoteprocess::
     // the python_filename might have the version encoded in it (/usr/bin/python3.5 etc).
     // try reading that in (will miss patch level on python, but that shouldn't matter)
     println!("Trying to get version from path: {}", python_info.python_filename);
+    io::stdout().flush().unwrap();
     let path = Path::new(&python_info.python_filename);
     if let Some(python) = path.file_name() {
         if let Some(python) = python.to_str() {
@@ -612,6 +625,7 @@ fn get_interpreter_address(python_info: &PythonProcessInfo,
         }
     };
     println!("Failed to get interp_head from symbols, scanning BSS section from main binary");
+    io::stdout().flush().unwrap();
 
     // try scanning the BSS section of the binary for things that might be the interpreterstate
     let err =
@@ -626,6 +640,7 @@ fn get_interpreter_address(python_info: &PythonProcessInfo,
     // Before giving up, try again if there is a libpython.so
     if let Some(ref lpb) = python_info.libpython_binary {
         println!("Failed to get interpreter from binary BSS, scanning libpython BSS");
+        io::stdout().flush().unwrap();
         match get_interpreter_address_from_binary(lpb, &python_info.maps, process, version) {
             Ok(addr) => return Ok(addr),
             lib_err => err.unwrap_or(lib_err)
@@ -745,6 +760,7 @@ impl PythonProcessInfo {
         // get virtual memory layout
         let maps = get_process_maps(process.pid)?;
         println!("Got virtual memory maps from pid {}:", process.pid);
+        io::stdout().flush().unwrap();
         for map in &maps {
             debug!("map: {:016x}-{:016x} {}{}{} {}", map.start(), map.start() + map.size(),
                 if map.is_read() {'r'} else {'-'}, if map.is_write() {'w'} else {'-'}, if map.is_exec() {'x'} else {'-'},
@@ -818,6 +834,7 @@ impl PythonProcessInfo {
             if let Some(libpython) = libmap {
                 if let Some(filename) = &libpython.filename() {
                     println!("Found libpython binary @ {}", filename);
+                    io::stdout().flush().unwrap();
                     #[allow(unused_mut)]
                     let mut parsed = parse_binary(process.pid, filename, libpython.start() as u64, libpython.size() as u64, false)?;
                     #[cfg(windows)]
@@ -848,6 +865,7 @@ impl PythonProcessInfo {
 
                     if let Some(libpython) = python_dyld_data {
                         println!("Found libpython binary from dyld @ {}", libpython.filename);
+                        io::stdout().flush().unwrap();
 
                         let mut binary = parse_binary(process.pid, &libpython.filename, libpython.segment.vmaddr, libpython.segment.vmsize, false)?;
 
@@ -884,6 +902,7 @@ impl PythonProcessInfo {
         if let Some(ref pb) = self.python_binary {
             if let Some(addr) = pb.symbols.get(symbol) {
                 println!("got symbol {} (0x{:016x}) from python binary", symbol, addr);
+                io::stdout().flush().unwrap();
                 return Some(addr);
             }
         }
@@ -891,6 +910,7 @@ impl PythonProcessInfo {
         if let Some(ref binary) = self.libpython_binary {
             if let Some(addr) = binary.symbols.get(symbol) {
                 println!("got symbol {} (0x{:016x}) from libpython binary", symbol, addr);
+                io::stdout().flush().unwrap();
                 return Some(addr);
             }
         }
