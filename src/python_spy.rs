@@ -594,6 +594,9 @@ fn get_python_version(python_info: &PythonProcessInfo, process: &remoteprocess::
             }
         }
     }
+
+    println!("Use hard-coded 3.8.8");
+    io::stdout().flush().unwrap();
     return Ok(Version{major: 3, minor: 8, patch: 8, release_flags: "".to_owned()})
     // Err(format_err!("Failed to find python version from target process"))
 }
